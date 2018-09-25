@@ -1,11 +1,11 @@
 import pygame
 from pygame.locals import *
-from random import randint
+from random import randint, seed
 
 import os
 import neat
 
-GAME_WIDTH = 40
+GAME_WIDTH = 20
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 800
@@ -59,6 +59,7 @@ class Board:
 		self._apples = set()
 
 		self.add_apple()
+		seed(6969)
 
 	def set_heading(self, dir):
 		if dir != opposite_direction(self.heading): # Can't run back on yourself
@@ -103,7 +104,7 @@ class Board:
 		fwd = self.heading
 		left = left_dir(self.heading)
 		right = right_dir(self.heading)
-		is_snake = lambda loc: loc in self._snake
+		is_snake = lambda loc: loc != head and loc in self._snake
 		is_apple = lambda loc: loc in self._apples
 		return (
 			dist_scale(head, fwd, is_oob),
@@ -124,7 +125,7 @@ class Board:
 		max_dist = GAME_WIDTH * 1.4142
 		return 10*len(self._snake) + 1-(apple_dist / max_dist)
 
-def show_game(board, run_events):
+def show_game(board, run_events, delay=5):
 	pygame.init()
 	screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 	while not board.done:
@@ -132,13 +133,12 @@ def show_game(board, run_events):
 		board.render(screen)
 		pygame.display.flip()
 
-		run_events()
+		run_events(board)
 		board.step()
-		pygame.time.delay(5)
+		pygame.time.delay(delay)
 
 def play():
-	board = Board()
-	def run_events():
+	def run_events(board):
 		for event in pygame.event.get():
 			if event.type == KEYDOWN:
 				if event.key == K_UP:
@@ -152,32 +152,37 @@ def play():
 				elif event.key == K_ESCAPE:
 					board.done = True
 
-	show_game(board, run_events)
+	show_game(Board(), run_events)
+
+def get_next_heading(net, board):
+	output = net.activate(board.get_params())
+	best = max(output)
+
+	if output[1] == best:
+		return board.heading
+	if output[0] == best:
+		return left_dir(board.heading)
+	else:
+		return right_dir(board.heading)
+
+def eval_net(net):
+	b = Board()
+
+	snake_len, count = 1, 0
+	while not b.done and count < 50:
+		if len(b._snake) > snake_len:
+			count, snake_len = 0, len(b._snake)
+		else:
+			count += 1
+
+		b.set_heading(get_next_heading(net, b))
+		b.step()
+	return b.get_score()
 
 def eval_genomes(genomes, config):
 	for genome_id, genome in genomes:
 		net = neat.nn.FeedForwardNetwork.create(genome, config)
-		b = Board()
-
-		snake_len, count = 1, 0
-		while count < 50 and not b.done:
-			global snake_len, count
-			if len(b._snake) > snake_len:
-				count, snake_len = 0, len(b._snake)
-			else:
-				count += 1
-
-			output = net.activate(b.get_params())
-			best = max(output)
-			if output[0] == best:
-				b.set_heading(left_dir(b.heading))
-			elif output[2] == best:
-				b.set_heading(right_dir(b.heading))
-
-			b.step()
-			b.done = b.done or count > 50
-
-		genome.fitness = b.get_score()
+		genome.fitness = eval_net(net)
 
 def train():
 	# Load configuration.
@@ -192,10 +197,19 @@ def train():
 	p.add_reporter(neat.StdOutReporter(True))
 	stats = neat.StatisticsReporter()
 	p.add_reporter(stats)
-	p.add_reporter(neat.Checkpointer(5))
+	#p.add_reporter(neat.Checkpointer(5))
+
+	def update_blah(b, net):
+		b.set_heading(get_next_heading(net, b))
+		pygame.event.get()
 
 	# Run for up to 300 generations.
-	winner = p.run(eval_genomes, 500)
+	winner = p.run(eval_genomes, 5000)
+	print("winrar")
+	input()
+
+	net = neat.nn.FeedForwardNetwork.create(winner, config)
+	show_game(Board(), lambda b: update_blah(b, net), 50)
 
 	# Display the winning genome.
 	print('\nBest genome:\n{!s}'.format(winner))
