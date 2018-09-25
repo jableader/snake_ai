@@ -1,8 +1,8 @@
 import pygame
 from pygame.locals import *
 from random import randint, seed
-
-import os
+import math
+import os, sys
 import neat
 
 GAME_WIDTH = 20
@@ -41,6 +41,29 @@ def is_oob(pt):
 	y, x = pt
 	return y < 0 or y >= GAME_WIDTH or x < 0 or x >= GAME_WIDTH
 
+def angle_ratio_points(a, b, dir):
+	y1, x1 = a
+	y2, x2 = b
+
+	angle = math.atan2(y2 - y1, x2 - x1) + math.pi
+	if dir == DIR_EAST:
+		angle += math.pi
+	elif dir == DIR_NORTH:
+		angle -= math.pi / 2
+	elif dir == DIR_SOUTH:
+		angle += math.pi / 2
+	angle = angle % (2 * math.pi)
+	angle -= math.pi
+	ratio = abs(angle / math.pi)
+	return ratio
+
+def dist_euclids(a, b):
+	ay, ax = a
+	by, bx = b
+	distance = ((ax - bx)**2 + (ay - by)**2)**0.5
+	max_dist = GAME_WIDTH * (2**0.5)
+	return (max_dist - distance) / max_dist
+
 def dist_scale(location, heading, is_end_fn):
 	count = 0
 	dir_coords = heading_coords(heading)
@@ -59,7 +82,7 @@ class Board:
 		self._apples = set()
 
 		self.add_apple()
-		seed(6969)
+		# seed(6969)
 
 	def set_heading(self, dir):
 		if dir != opposite_direction(self.heading): # Can't run back on yourself
@@ -99,23 +122,39 @@ class Board:
 			surf.fill((255, 0, 0))
 			screen.blit(surf, (x * dx, y * dy))
 
-	def get_params(self):
+		self.render_params(screen)
+
+	def render_params(self, screen):
+		sz = 10
+		font = pygame.font.SysFont('Comic Sans MS', sz)
+		color = (0, 200, 0)
+		for i, nameValue in enumerate(self.get_named_params()):
+			text = font.render("%s: %f" % nameValue, True, color)
+			screen.blit(text, (5, 5 + 1.3*sz * i))
+
+	def get_named_params(self):
 		head = self._snake[-1]
 		fwd = self.heading
 		left = left_dir(self.heading)
 		right = right_dir(self.heading)
 		is_snake = lambda loc: loc != head and loc in self._snake
 		is_apple = lambda loc: loc in self._apples
+
+		apple = next(iter(self._apples))
 		return (
-			dist_scale(head, fwd, is_oob),
-			dist_scale(head, left, is_oob),
-			dist_scale(head, right, is_oob),
-			dist_scale(head, fwd, is_snake),
-			dist_scale(head, left, is_snake),
-			dist_scale(head, right, is_snake),
-			dist_scale(head, fwd, is_apple),
-			dist_scale(head, left, is_apple),
-			dist_scale(head, right, is_apple))
+			("head_fwd_is_oob", dist_scale(head, fwd, is_oob)),
+			("head_left_is_oob", dist_scale(head, left, is_oob)),
+			("head_right_is_oob", dist_scale(head, right, is_oob)),
+			("head_fwd_is_snake", dist_scale(head, fwd, is_snake)),
+			("head_left_is_snake", dist_scale(head, left, is_snake)),
+			("head_right_is_snake", dist_scale(head, right, is_snake)),
+			("distance", dist_euclids(head, apple)),
+			("theta left", angle_ratio_points(head, apple, left)),
+			("theta right", angle_ratio_points(head, apple, right))
+			)
+
+	def get_params(self):
+		return [x[1] for x in self.get_named_params()]
 
 	def get_score(self):
 		hy, hx = self._snake[-1]
@@ -127,6 +166,8 @@ class Board:
 
 def show_game(board, run_events, delay=5):
 	pygame.init()
+	pygame.font.init() # you have to call this at the start, 
+
 	screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 	while not board.done:
 		screen.fill((0, 0, 0))
@@ -151,17 +192,18 @@ def play():
 					board.set_heading(DIR_WEST)
 				elif event.key == K_ESCAPE:
 					board.done = True
+				elif event.key==K_SPACE:
+					input()
 
-	show_game(Board(), run_events)
+	show_game(Board(), run_events, 200)
 
 def get_next_heading(net, board):
-	output = net.activate(board.get_params())
-	best = max(output)
+	output = net.activate(board.get_params())[0]
 
-	if output[1] == best:
-		return board.heading
-	if output[0] == best:
+	if output < (1/3):
 		return left_dir(board.heading)
+	if output < (2/3):
+		return board.heading
 	else:
 		return right_dir(board.heading)
 
@@ -169,7 +211,7 @@ def eval_net(net):
 	b = Board()
 
 	snake_len, count = 1, 0
-	while not b.done and count < 50:
+	while not b.done and count < max(50, len(b._snake)*10):
 		if len(b._snake) > snake_len:
 			count, snake_len = 0, len(b._snake)
 		else:
@@ -181,8 +223,14 @@ def eval_net(net):
 
 def eval_genomes(genomes, config):
 	for genome_id, genome in genomes:
-		net = neat.nn.FeedForwardNetwork.create(genome, config)
+		net = neat.nn.RecurrentNetwork.create(genome, config)
 		genome.fitness = eval_net(net)
+
+def update_blah(b, net):
+		b.set_heading(get_next_heading(net, b))
+		for event in pygame.event.get():
+			if event.type == pygame.QUIT:
+				sys.exit(0)
 
 def train():
 	# Load configuration.
@@ -197,22 +245,34 @@ def train():
 	p.add_reporter(neat.StdOutReporter(True))
 	stats = neat.StatisticsReporter()
 	p.add_reporter(stats)
-	#p.add_reporter(neat.Checkpointer(5))
+	p.add_reporter(neat.Checkpointer(1000))
 
-	def update_blah(b, net):
-		b.set_heading(get_next_heading(net, b))
-		pygame.event.get()
-
-	# Run for up to 300 generations.
-	winner = p.run(eval_genomes, 5000)
+	# Run for up to N generations.
+	winner = p.run(eval_genomes, 8000)
 	print("winrar")
-	input()
 
-	net = neat.nn.FeedForwardNetwork.create(winner, config)
-	show_game(Board(), lambda b: update_blah(b, net), 50)
+	net = neat.nn.RecurrentNetwork.create(winner, config)
+	while input() != "q":
+		show_game(Board(), lambda b: update_blah(b, net), 50)
 
 	# Display the winning genome.
 	print('\nBest genome:\n{!s}'.format(winner))
 
+def from_checkpoint():
+	# Load configuration.
+	config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+						 neat.DefaultSpeciesSet, neat.DefaultStagnation,
+						 'config.cfg')
+
+	p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-29065')
+	# Run for up to N generations.
+	winner = p.run(eval_genomes, 10)
+	print("winrar")
+
+	net = neat.nn.RecurrentNetwork.create(winner, config)
+	while input() != "q":
+		show_game(Board(), lambda b: update_blah(b, net), 50)
+
 train()
 # play()
+#from_checkpoint()
