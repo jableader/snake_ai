@@ -50,17 +50,19 @@ def angle_ratio_points(a, b, dir):
 	y1, x1 = a
 	y2, x2 = b
 
-	angle = math.atan2(y2 - y1, x2 - x1) + math.pi
-	if dir == DIR_EAST:
-		angle += math.pi
+	angle = math.atan2(y2 - y1, x2 - x1) + math.pi# 0 -> 360 where E is 0
+	deg_90 = math.pi / 2
+	if dir == DIR_SOUTH:
+		angle += 3 * deg_90
+	elif dir == DIR_WEST:
+		angle += 2 * deg_90
 	elif dir == DIR_NORTH:
-		angle -= math.pi / 2
-	elif dir == DIR_SOUTH:
-		angle += math.pi / 2
+		angle += deg_90
+	# Nothing for east
+
 	angle = angle % (2 * math.pi)
 	angle -= math.pi
-	ratio = abs(angle / math.pi)
-	return ratio
+	return angle / math.pi
 
 def dist_euclids(a, b):
 	ay, ax = a
@@ -170,8 +172,7 @@ class Board:
 			"head_left_is_death",
 			"head_right_is_death",
 			"distance",
-			"theta left",
-			"theta right",
+			"theta fwd",
 			]
 
 	def get_named_params(self):
@@ -191,8 +192,7 @@ class Board:
 			dist_scale(head, left, is_death),
 			dist_scale(head, right, is_death),
 			dist_euclids(head, apple),
-			angle_ratio_points(head, apple, left),
-			angle_ratio_points(head, apple, right)
+			angle_ratio_points(head, apple, fwd),
 			]
 
 	def is_oob(self, pt):
@@ -265,6 +265,7 @@ def get_next_heading(net, board):
 def eval_net(net, seeds):
 	score = 0
 	for s in seeds:
+		seed(s)
 		b = Board(GAME_WIDTH)
 		snake_len, count = 1, 0
 		while not b.done and count < b.boardsize * snake_len / 2:
@@ -275,14 +276,14 @@ def eval_net(net, seeds):
 
 			b.set_heading(get_next_heading(net, b))
 			b.step()
-		score += b.get_score()
+		score += b.get_score() + snake_len
 	return score
 
 suspected_generation = -1
 def eval_genomes(genomes, config):
 	global suspected_generation
 	suspected_generation += 1
-	seeds = [randint(0, 999999) for x in range(50)]
+	seeds = [randint(0, 999999) for x in range(10)]
 
 	for genome_id, genome in genomes:
 		net = neat.nn.RecurrentNetwork.create(genome, config)
@@ -328,7 +329,7 @@ def train(generations):
 		wait_for_space()
 
 def visualize_net(config, winner, stats):
-	node_names = {}
+	node_names = { 'move_left': 1, 'move_fwd': 2, 'move_right': 3 }
 	for i, name in enumerate(Board.param_names()):
 		node_names[(i + 1) * - 1] = name
 
@@ -337,12 +338,12 @@ def visualize_net(config, winner, stats):
 	visualize.plot_species(stats, view=True)
 
 task = 'train'
-generations = 10
+generations = 100
 
 if len(sys.argv) > 1:
 	task = sys.argv[1]
 
-if len(sys.argv) >= 2:
+if len(sys.argv) > 2:
 	generations = sys.argv[2]
 
 if task == 'train':
