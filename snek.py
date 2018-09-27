@@ -126,7 +126,7 @@ class Board:
 
 	def render(self, screen):
 		screen.fill((0, 0, 0))
-		
+
 		dx, dy = SCREEN_WIDTH // self.boardsize, SCREEN_HEIGHT // self.boardsize
 		for y, x in self._snake:
 			surf = pygame.Surface((dx, dy))
@@ -210,7 +210,7 @@ class Board:
 
 def show_game(board, run_events, delay=5):
 	pygame.init()
-	pygame.font.init() # you have to call this at the start, 
+	pygame.font.init() # you have to call this at the start,
 
 	screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 	board.render(screen)
@@ -262,33 +262,42 @@ def get_next_heading(net, board):
 	else:
 		return right_dir(board.heading)
 
-def eval_net(net, suspected_generation):
-	b = Board(2 + max(100, int(suspected_generation / 2)))
-	snake_len, count = 1, 0
-	while not b.done and count < b.boardsize * snake_len / 2:
-		if len(b._snake) > snake_len:
-			count, snake_len = 0, len(b._snake)
-		else:
-			count += 1
+def eval_net(net, seeds):
+	score = 0
+	for s in seeds:
+		b = Board(GAME_WIDTH)
+		snake_len, count = 1, 0
+		while not b.done and count < b.boardsize * snake_len / 2:
+			if len(b._snake) > snake_len:
+				count, snake_len = 0, len(b._snake)
+			else:
+				count += 1
 
-		b.set_heading(get_next_heading(net, b))
-		b.step()
-	return b.get_score()
+			b.set_heading(get_next_heading(net, b))
+			b.step()
+		score += b.get_score()
+	return score
 
 suspected_generation = -1
 def eval_genomes(genomes, config):
 	global suspected_generation
 	suspected_generation += 1
+	seeds = [randint(0, 999999) for x in range(50)]
 
 	for genome_id, genome in genomes:
 		net = neat.nn.RecurrentNetwork.create(genome, config)
-		genome.fitness = eval_net(net, suspected_generation)
+		genome.fitness = eval_net(net, seeds)
 
-def update_blah(b, net):
+def update_from_net(b, net):
 		b.set_heading(get_next_heading(net, b))
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:
 				sys.exit(0)
+			elif event.type == KEYDOWN:
+				if event.key == K_SPACE:
+					wait_for_space()
+				elif event.key == K_RETURN:
+					b.done = True
 
 def train(generations):
 	# Load configuration.
@@ -310,12 +319,12 @@ def train(generations):
 
 	# Display the winning genome.
 	print('\nBest genome:\n{!s}'.format(winner))
-	
+
 	visualize_net(config, winner, stats)
-	
+
 	net = neat.nn.RecurrentNetwork.create(winner, config)
 	while True:
-		show_game(Board(), lambda b: update_blah(b, net), 50)
+		show_game(Board(), lambda b: update_from_net(b, net), 50)
 		wait_for_space()
 
 def visualize_net(config, winner, stats):
@@ -327,23 +336,8 @@ def visualize_net(config, winner, stats):
 	visualize.plot_stats(stats, ylog=False, view=True)
 	visualize.plot_species(stats, view=True)
 
-def from_checkpoint(generations):
-	# Load configuration.
-	config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-						 neat.DefaultSpeciesSet, neat.DefaultStagnation,
-						 'config.cfg')
-
-	p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-29065')
-	# Run for up to N generations.
-	winner = p.run(eval_genomes, generations)
-	print("winrar")
-
-	net = neat.nn.RecurrentNetwork.create(winner, config)
-	while input() != "q":
-		show_game(Board(), lambda b: update_blah(b, net), 50)
-
 task = 'train'
-generations = 10000
+generations = 10
 
 if len(sys.argv) > 1:
 	task = sys.argv[1]
