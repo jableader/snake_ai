@@ -91,6 +91,7 @@ class Board:
 		self._score = 0
 
 		self.add_apple()
+		self.steps_since_apple = 0
 		self._last_apple_distance = self.get_apple_distance()
 
 	def set_heading(self, dir):
@@ -107,7 +108,7 @@ class Board:
 			return
 
 		delta = self.get_apple_distance() - self._last_apple_distance
-		max_boardsize = 2 * self.boardsize * 1.42
+		max_boardsize = 2 * self.boardsize
 		bonus = delta / max_boardsize
 		if bonus < 0:
 			bonus *=2
@@ -116,8 +117,10 @@ class Board:
 		self._snake.append(next_head)
 		if next_head in self._apples:
 			self._apples.remove(next_head)
+			self.steps_since_apple = 0
 			self.add_apple()
 		else:
+			self.steps_since_apple += 1
 			self._snake.pop(0)
 
 	def add_apple(self):
@@ -168,9 +171,11 @@ class Board:
 	@staticmethod
 	def param_names():
 		return [
-			"head_fwd_is_death",
+			"back_left_is_death",
 			"head_left_is_death",
+			"head_fwd_is_death",
 			"head_right_is_death",
+			"back_right_is_death",
 			"distance",
 			"theta fwd",
 			]
@@ -182,15 +187,22 @@ class Board:
 		apple = next(iter(self._apples))
 		head = self._snake[-1]
 		fwd = self.heading
-		left = left_dir(self.heading)
-		right = right_dir(self.heading)
+		left = left_dir(fwd)
+		right = right_dir(fwd)
+		back = opposite_direction(fwd)
+
+		head_left = add_coords(head, heading_coords(left))
+		head_right = add_coords(head, heading_coords(right))
+		
 		is_death = lambda loc: loc != head and (loc in self._snake or self.is_oob(loc))
 		is_apple = lambda loc: loc in self._apples
 
 		return [
-			dist_scale(head, fwd, is_death),
+			dist_scale(head_left, back, is_death),
 			dist_scale(head, left, is_death),
+			dist_scale(head, fwd, is_death),
 			dist_scale(head, right, is_death),
+			dist_scale(head_right, back, is_death),
 			dist_euclids(head, apple),
 			angle_ratio_points(head, apple, fwd),
 			]
@@ -206,7 +218,7 @@ class Board:
 		return ((hx - ax)**2 + (hy - ay)**2)**0.5
 
 	def get_score(self):
-		return 10*len(self._snake) + self._score
+		return 100*len(self._snake) + self._score
 
 def show_game(board, run_events, delay=5):
 	pygame.init()
@@ -233,6 +245,8 @@ def wait_for_space():
 
 def play():
 	def run_events(board):
+		b.done = b.done or board.steps_since_apple > GAME_WIDTH**2
+
 		for event in pygame.event.get():
 			if event.type == KEYDOWN:
 				if event.key == K_UP:
@@ -266,30 +280,25 @@ def eval_net(net, seeds):
 	score = 0
 	for s in seeds:
 		seed(s)
-		b = Board(GAME_WIDTH)
-		snake_len, count = 1, 0
-		while not b.done and count < b.boardsize * snake_len / 2:
-			if len(b._snake) > snake_len:
-				count, snake_len = 0, len(b._snake)
-			else:
-				count += 1
-
+		b = Board(GAME_WIDTH // 2)
+		while not b.done and b.steps_since_apple < (25 + b.boardsize * len(b._snake) / 2):
 			b.set_heading(get_next_heading(net, b))
 			b.step()
-		score += b.get_score() + snake_len
+		score += b.get_score()
 	return score
 
 suspected_generation = -1
 def eval_genomes(genomes, config):
 	global suspected_generation
 	suspected_generation += 1
-	seeds = [randint(0, 999999) for x in range(10)]
+	seeds = [randint(0, 999999) for x in range(25)]
 
 	for genome_id, genome in genomes:
 		net = neat.nn.RecurrentNetwork.create(genome, config)
 		genome.fitness = eval_net(net, seeds)
 
 def update_from_net(b, net):
+		b.done = b.done or b.steps_since_apple > GAME_WIDTH**2
 		b.set_heading(get_next_heading(net, b))
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:
@@ -300,11 +309,14 @@ def update_from_net(b, net):
 				elif event.key == K_RETURN:
 					b.done = True
 
+def create_config():
+	return neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+			neat.DefaultSpeciesSet, neat.DefaultStagnation,
+			'config.cfg')
+
 def train(generations):
 	# Load configuration.
-	config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-						 neat.DefaultSpeciesSet, neat.DefaultStagnation,
-						 'config.cfg')
+	config = create_config()
 
 	# Create the population, which is the top-level object for a NEAT run.
 	p = neat.Population(config)
@@ -316,20 +328,20 @@ def train(generations):
 	p.add_reporter(neat.Checkpointer(1000))
 
 	# Run for up to N generations.
-	winner = p.run(eval_genomes, generations)
-
-	# Display the winning genome.
-	print('\nBest genome:\n{!s}'.format(winner))
-
-	visualize_net(config, winner, stats)
-
-	net = neat.nn.RecurrentNetwork.create(winner, config)
 	while True:
+		winner = p.run(eval_genomes, generations)
+
+		# Display the winning genome.
+		print('\nBest genome:\n{!s}'.format(winner))
+
+		#visualize_net(config, winner, stats)
+
+		net = neat.nn.RecurrentNetwork.create(winner, config)
 		show_game(Board(), lambda b: update_from_net(b, net), 50)
-		wait_for_space()
+			# wait_for_space()
 
 def visualize_net(config, winner, stats):
-	node_names = { 'move_left': 1, 'move_fwd': 2, 'move_right': 3 }
+	node_names = { 'move_left': 0, 'move_fwd': 1, 'move_right': 2 }
 	for i, name in enumerate(Board.param_names()):
 		node_names[(i + 1) * - 1] = name
 
@@ -337,14 +349,38 @@ def visualize_net(config, winner, stats):
 	visualize.plot_stats(stats, ylog=False, view=True)
 	visualize.plot_species(stats, view=True)
 
+def biggest_checkpoint():
+	all_paths = [f for f in os.listdir('.') if os.path.isfile(f) and f.startswith('neat-checkpoint')]
+	biggest = all_paths[0]
+	for f in all_paths:
+		if os.path.getmtime(f) > os.path.getmtime(biggest):
+			biggest = f
+	return biggest	
+
+def from_checkpoint(checkpoint_num):
+	config = create_config()
+	checkpoint = biggest_checkpoint()
+	print("Loading %s" % checkpoint)
+	p = neat.Checkpointer.restore_checkpoint(checkpoint)
+
+	print("Running sim")
+	winner = p.run(eval_genomes, 1)
+
+	net = neat.nn.RecurrentNetwork.create(winner, config)
+	
+	print("It's playtime")
+	
+	for run in range(1, 100):
+		show_game(Board(2 * run + 1), lambda b: update_from_net(b, net), int(500 / 1.5**run))
+
 task = 'train'
-generations = 100
+generations = 1
 
 if len(sys.argv) > 1:
 	task = sys.argv[1]
 
 if len(sys.argv) > 2:
-	generations = sys.argv[2]
+	generations = int(sys.argv[2])
 
 if task == 'train':
 	train(generations)
