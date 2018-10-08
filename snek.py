@@ -370,8 +370,8 @@ def from_checkpoint(checkpoint_num):
 	
 	print("It's playtime")
 	
-	for run in range(1, 100):
-		show_game(Board(2 * run + 1), lambda b: update_from_net(b, net), int(500 / 1.5**run))
+	for run in range(1, 10):
+		show_game(Board(2 * run + 1), lambda b: update_from_net(b, net), 20)
 
 task = 'train'
 generations = 1
